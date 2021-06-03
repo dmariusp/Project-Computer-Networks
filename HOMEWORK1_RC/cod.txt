@@ -1,0 +1,588 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <time.h>
+#include <sys/wait.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <stdbool.h>
+#include <dirent.h>
+#include <libgen.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+
+bool login(char* command)
+{
+    int p0top1[2];
+    int p1top0[2];
+    int pid;
+
+    //Cream pipe-ul p0top1:
+
+    if( pipe ( p0top1 ) == -1 ) {
+        perror("Eroare la crearea pipe-ului. Cauza este: ");
+        exit(1);
+    }
+
+    //Cream pipe-ul p1top0:
+
+    if( pipe ( p1top0 ) == -1 ) {
+        perror("Eroare la crearea pipe-ului. Cauza este: ");
+        exit(1);
+    }
+
+
+    //Cream primul proces fiu:
+
+    if( ( pid = fork() ) == -1 ) {
+        perror("Eroare la crearea procesului copil. ");
+        exit(2);
+    }
+
+
+
+    if(pid) {
+        bool loggedOn;
+        size_t log_len;
+        char user[100];
+
+        close(p0top1[0]);
+        close(p1top0[1]);
+
+        strcpy(user,command+strlen("login : "));
+        size_t user_len = strlen(user);
+        write(p0top1[1],&user_len,sizeof(user_len));
+        write(p0top1[1],user, user_len);
+
+        read(p1top0[0], &log_len, sizeof(size_t));
+        read(p1top0[0], &loggedOn, log_len);
+
+        close(p1top0[0]);
+        close(p0top1[1]);
+        wait(NULL);
+
+        return loggedOn;
+    } else
+    {
+        bool loggedOn1 = false;
+        size_t log_len1;
+
+        close (p0top1[1]);
+        close(p1top0[0]);
+
+        char username[100];
+        char buffer[100];
+        size_t user_len1;
+
+        FILE* fd;
+        fd = fopen("users.txt", "r");
+
+        read(p0top1[0], &user_len1, sizeof(size_t));
+        read(p0top1[0], username, user_len1);
+
+        username[user_len1] = 0;
+
+        while( fgets(buffer, sizeof(buffer), fd) )
+        {
+            if(strcmp(buffer,username) == 0)
+            {
+                fclose(fd);
+                loggedOn1 = true;
+            }
+        }
+
+        fclose(fd);
+
+        log_len1 = sizeof(loggedOn1);
+        write(p1top0[1],&log_len1,sizeof(log_len1));
+        write(p1top0[1],&loggedOn1, log_len1);
+
+        close (p0top1[1]);
+        close(p1top0[0]);
+        exit(0);
+    }
+
+}
+
+void myfind(char *nume_dir, char *fisier, FILE *fd)
+{
+    DIR *dir;
+    struct dirent *de; /* man dirent.h references*/
+    char nume[200];
+    char aux_buffer[1024];
+    size_t aux_buffer_len;
+
+    if(NULL == (dir = opendir(nume_dir)) )
+    {
+        sprintf(aux_buffer,"\nEroare deschidere %s .\tCauza este %s\n",nume_dir,strerror(errno));
+        aux_buffer_len = strlen(aux_buffer);
+
+//        printf("%s\n",aux_buffer);
+//        printf("%d\n",aux_buffer_len);
+        fwrite(&aux_buffer_len,sizeof(aux_buffer_len), 1, fd);
+        fwrite(aux_buffer,aux_buffer_len, 1, fd);
+        return;
+    }
+
+
+    while(NULL != (de = readdir(dir)) ) {
+        if (strcmp(de->d_name, ".") !=0  && strcmp(de->d_name, "..") != 0) {
+            struct stat info;
+            sprintf(nume, "%s/%s", nume_dir, de->d_name);
+            stat(nume, &info);
+            if (S_ISDIR(info.st_mode))
+                myfind(nume, fisier, fd);
+            else {
+                if(strstr(nume,fisier)) {
+                    sprintf(aux_buffer, "\n%s inot_t: %ld ctime: %s permissions: %lo la path: %s\n", fisier,
+                            (long) info.st_ino, ctime(&info.st_ctime), (long) info.st_mode, nume);  /* man 2 stat references*/
+                    aux_buffer_len = strlen(aux_buffer);
+//                    printf("%s\n",aux_buffer);
+//                    printf("%d\n",aux_buffer_len);
+                    fwrite(&aux_buffer_len,sizeof(aux_buffer_len), 1, fd);
+                    fwrite(aux_buffer,aux_buffer_len, 1, fd);
+                }
+            }
+        }
+    }
+
+    closedir(dir);
+
+}
+
+void apelare_myfind(char* command)
+{
+    int pid1;
+
+    //Cream procesul copil
+
+    if( mkfifo("p0top2",0600) == -1)
+    {
+        if(errno == EEXIST)
+            printf("Canalul FIFO 'p0top2' exista deja!\n");
+        else
+            {
+                perror("Eroare la crearea canalului FIFO! Cauza erorii: ");
+                exit(1);
+            }
+    }
+
+    if( mkfifo("p2top0",0600) == -1)
+    {
+        if(errno == EEXIST)
+            printf("Canalul FIFO 'p2top0' exista deja!\n");
+        else
+        {
+            perror("Eroare la crearea canalului FIFO! Cauza erorii: ");
+            exit(1);
+        }
+    }
+
+    if((pid1 = fork()) == -1)
+    {
+        perror("Eroare la crearea procesului copil");
+        exit(3);
+    }
+    if(pid1)
+    {
+        FILE *fd1;
+        FILE *fd2;
+        char path[500];
+        char file[100];
+        char aux[100];
+        char buffer[1024];
+        int buffer_len;
+
+        strcpy(command+(strlen(command)-1),command+strlen(command));
+
+        strcpy(aux,strtok(command, " ")); //elimina numele comenzii
+        strcpy(path, strtok(NULL, " "));
+        strcpy(file,strtok(NULL, " "));
+
+        size_t path_len = strlen(path);
+        size_t file_len = strlen(file);
+
+        fd1 = fopen("p0top2","w");
+        fd2 = fopen("p2top0", "r");
+
+//        fseek(fd1,0,SEEK_SET);
+
+//        printf("%zu\n",path_len);
+        fwrite(&path_len, sizeof(path_len),1,fd1);
+
+//        printf("%s\n",path);
+        fwrite(path, path_len,1,fd1);
+
+//        printf("%zu\n",file_len);
+        fwrite(&file_len, sizeof(file_len),1,fd1);
+
+//        printf("%s\n",file);
+        fwrite(file,file_len,1,fd1);
+        fclose(fd1);
+
+        while(fread(&buffer_len, sizeof(size_t),1, fd2) > 0){
+            fread(buffer,buffer_len,1,fd2);
+            buffer[buffer_len] = 0;
+            printf("%s",buffer);
+        }
+
+        fclose(fd2);
+        wait(NULL);
+    } else
+    {
+        FILE *fd_c1;
+        FILE *fd_c2;
+        size_t path_len1;
+        size_t file_len1;
+        char path_user[500];
+        char file_user[100];
+
+        fd_c1 = fopen("p0top2","r");
+        fd_c2 = fopen("p2top0", "w");
+
+//        fseek(fd_1,0,SEEK_SET);
+        fread(&path_len1, sizeof(size_t),1,fd_c1);
+//        printf("%zu\n",path_len1);
+
+        fread(path_user,path_len1,1,fd_c1);
+//        printf("%s\n", path_user);
+        path_user[path_len1] = 0;
+
+        fread(&file_len1, sizeof(size_t),1,fd_c1);
+//        printf("%zu\n",file_len1);
+
+        fread(file_user,file_len1,1,fd_c1);
+//        printf("%s\n",file_user);
+        file_user[file_len1] = 0;
+        fclose(fd_c1);
+
+        myfind(path_user,file_user, fd_c2);
+
+        fclose(fd_c2);
+        exit(0);
+    }
+}
+
+void mystat( char path[]) //https://man7.org/linux/man-pages/man2/stat.2.html (reference)
+{
+    struct stat file_info;
+    char file_name[150];
+    strcpy(file_name, basename(path));
+    printf("%s\n", file_name);
+
+    if (stat(path, &file_info) == -1) {
+        perror("stat");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Name: %s\n", file_name);
+    printf("File type: ");
+    switch (file_info.st_mode & S_IFMT) {
+        case S_IFBLK:  printf("block device\n");break;
+        case S_IFCHR:  printf("character device\n");break;
+        case S_IFDIR:  printf("directory\n");break;
+        case S_IFIFO:  printf("FIFO/pipe\n");break;
+        case S_IFLNK:  printf("symlink\n");break;
+        case S_IFREG:  printf("regular file\n");break;
+        case S_IFSOCK: printf("socket\n");break;
+    }
+
+    printf("I-node number: %ld\n", (long) file_info.st_ino);
+    printf("Mode: %lo (octal)\n", (unsigned long) file_info.st_mode);
+
+    printf("File Permissions: \t");
+    printf( (S_ISDIR(file_info.st_mode)) ? "d" : "-");
+    printf( (file_info.st_mode & S_IRUSR) ? "r" : "-");
+    printf( (file_info.st_mode & S_IWUSR) ? "w" : "-");
+    printf( (file_info.st_mode & S_IXUSR) ? "x" : "-");
+    printf( (file_info.st_mode & S_IRGRP) ? "r" : "-");
+    printf( (file_info.st_mode & S_IWGRP) ? "w" : "-");
+    printf( (file_info.st_mode & S_IXGRP) ? "x" : "-");
+    printf( (file_info.st_mode & S_IROTH) ? "r" : "-");
+    printf( (file_info.st_mode & S_IWOTH) ? "w" : "-");
+    printf( (file_info.st_mode & S_IXOTH) ? "x" : "-");
+    printf("\n");
+
+    printf("Link count: %ld\n", (long) file_info.st_nlink);
+    printf("Ownership: UID=%ld ; GID=%ld\n", (long) file_info.st_uid, (long) file_info.st_gid);
+    printf("Preferred I/O block size: %ld bytes\n", (long) file_info.st_blksize);
+    printf("File size: %lld bytes\n", (long long) file_info.st_size);
+    printf("Blocks allocated: %lld\n", (long long) file_info.st_blocks);
+
+    printf("Last status change: %s", ctime(&file_info.st_ctime));
+    printf("Last file access: %s", ctime(&file_info.st_atime));
+    printf("Last file modification: %s", ctime(&file_info.st_mtime));
+}
+
+void apelare_mystat(char* command)
+{
+    int socketp[2];
+    int pid2;
+
+    if(socketpair(AF_UNIX, SOCK_STREAM, 0,socketp) < 0)
+    {
+        perror("Eroare la crearea socketpair-ului\n");
+        exit(4);
+    }
+
+    if((pid2 = fork()) == -1)
+    {
+        perror("Eroare la crearea procesului copil.");
+        exit(5);
+    }
+
+    if(pid2)
+    {
+        char path[500];
+        size_t path_len;
+        close(socketp[0]);
+
+        strcpy(command+(strlen(command)-1),command+strlen(command));
+        strcpy(path,command + strlen("mystat "));
+
+        path_len = strlen(path);
+
+        write(socketp[1],&path_len,sizeof(path_len));
+        write(socketp[1],path,path_len);
+        close(socketp[1]);
+        wait(NULL);
+    } else
+        {
+            char path_user[500];
+            size_t path_user_len;
+            close(socketp[1]);
+
+            read(socketp[0],&path_user_len,sizeof(size_t));
+            read(socketp[0],path_user,path_user_len);
+
+            path_user[path_user_len] = 0;
+
+            printf("%s ,%zu\n",path_user,path_user_len);
+            mystat(path_user);
+            close(socketp[0]);
+            exit(0);
+    }
+}
+
+bool quit()
+{
+    int socketp[2];
+    int pid3;
+
+    if(socketpair(AF_UNIX, SOCK_STREAM, 0,socketp) < 0)
+    {
+        perror("Eroare la crearea socketpair-ului\n");
+        exit(5);
+    }
+
+    if((pid3 = fork()) == -1)
+    {
+        perror("Eroare la crearea procesului copil.");
+        exit(6);
+    }
+
+    if(pid3)
+    {
+        char message[10];
+        size_t message_len;
+        bool resultFather = false;
+        size_t resultFather_len;
+
+        close(socketp[0]);
+
+        printf("Are you sure? (Yes/No)\n");
+        scanf("%s",message);
+        getchar();
+
+//        printf("%s\n",message);
+
+        message_len = strlen(message);
+
+        write(socketp[1],&message_len,sizeof(message_len));
+        write(socketp[1],message,message_len);
+
+        read(socketp[1],&resultFather_len,sizeof(size_t));
+        read(socketp[1],&resultFather,resultFather_len);
+
+        close(socketp[1]);
+        wait(NULL);
+
+        return resultFather;
+    } else
+        {
+            bool result;
+            char message_user[10];
+            size_t message_user_len;
+
+            close(socketp[1]);
+
+            read(socketp[0],&message_user_len,sizeof(size_t));
+            read(socketp[0],message_user,message_user_len);
+
+            message_user[message_user_len] = 0;
+//            printf("%s\n",message_user);
+
+            if(strcmp(message_user,"Yes") == 0)
+                result = true;
+            else result = false;
+            size_t result_len = sizeof(result);
+
+            write(socketp[0],&result_len,sizeof(result_len));
+            write(socketp[0],&result,result_len);
+
+            close(socketp[0]);
+            exit(0);
+        }
+}
+
+void basic_commands(char* command, size_t command_len)
+{
+    int p0top5[2];
+    int p5top0[2];
+    int pid4;
+
+    if( pipe ( p0top5 ) == -1 ) {
+        perror("Eroare la crearea pipe-ului. Cauza este: ");
+        exit(1);
+    }
+
+    //Cream pipe-ul p1top0:
+
+    if( pipe ( p5top0 ) == -1 ) {
+        perror("Eroare la crearea pipe-ului. Cauza este: ");
+        exit(1);
+    }
+
+
+    //Cream primul proces fiu:
+
+    if( ( pid4 = fork() ) == -1 ) {
+        perror("Eroare la crearea procesului copil. ");
+        exit(2);
+    }
+
+    if(pid4)
+    {
+        close(p0top5[0]);
+        close(p5top0[1]);
+
+        strcpy(command+(command_len-1),command+command_len);
+
+        write(p0top5[1],&command_len,sizeof(command_len));
+        write(p0top5[1],command,command_len);
+
+        char exec_result;
+        while(read(p5top0[0],&exec_result,1) > 0)
+            write(1,&exec_result,1);
+
+        close(p5top0[0]);
+        close(p0top5[1]);
+        wait(NULL);
+    } else
+        {
+            char command_user[100];
+            size_t command_user_len;
+
+            close (p0top5[1]);
+            close(p5top0[0]);
+
+            read(p0top5[0], &command_user_len, sizeof(size_t));
+            read(p0top5[0], command_user, command_user_len);
+
+            command_user[command_user_len + 1] = 0;
+            printf("%s\n", command_user);
+
+            char* cmd_argv[15];
+            int cmd_argc = 0;
+
+            for(int i=0; i<15; i++)
+                cmd_argv[i] = malloc(20* sizeof(char)); // alocam dinamic spatiu pentru fiecare parametru al comenzii
+            char* cmd_arg = strtok(command_user, " ");
+            while(cmd_arg != NULL)
+            {
+                strcpy(cmd_argv[cmd_argc],cmd_arg);
+                cmd_argc++;
+                cmd_arg = strtok(NULL, " ");
+            }
+            cmd_argv[cmd_argc] = cmd_arg;
+
+            close(1); // inchidem pentru copil canalul stdout si asignam fd-ul acestuia (1) capatului de scriere al pipeului de scriere de lacopil la parinte
+
+            if(dup(p5top0[1]) != 1)
+            {
+                perror("Dup: fd = 1 este deja asignat! \n");
+                exit(7);
+            }
+
+            close (p0top5[1]);
+            close(p5top0[0]);
+
+            execvp(cmd_argv[0],cmd_argv);
+            exit(0);
+        }
+
+}
+
+int main() {
+    char user_command[200];
+    size_t user_command_len;
+    bool logged_state = false;
+    bool quit_result;
+
+    while (1) {
+        printf("\nHello! Write a command: ");
+        fgets(user_command, sizeof(user_command), stdin);
+        //user_command_len = strlen(user_command);
+        if (strncmp(user_command, "login : ", strlen("login : ")) == 0) {
+            if (!logged_state) {
+                if (login(user_command)) {
+                    logged_state = true;
+                    printf("Logged in!\n");
+                } else {
+                    printf("Failed to login!\n");
+                }
+            } else printf("Already logged in!\n");
+        } else {
+            if (strncmp(user_command, "quit", strlen("quit")) == 0) {
+                quit_result = quit();
+                if (quit_result) {
+                    printf("Quit successful!\n");
+                    return 0;
+                } else {
+                    printf("Quit aborted!\n");
+                    continue;
+                }
+
+            } else {
+                if (strncmp(user_command, "ls", strlen("ls")) == 0 || strncmp(user_command, "wc", strlen("wc")) == 0 || strncmp(user_command, "pwd", strlen("pwd")) == 0) //daca vrem sa mai adaugam alte comenzi, extindem if-ul cu cumparatii similare pentru comenzile dorite
+                {
+                    if (!logged_state) {
+                        printf("You are not logged in!\n");
+                    } else {
+                        user_command_len = strlen(user_command);
+                        basic_commands(user_command, user_command_len);
+                    }
+                }else{
+                    if(strncmp(user_command, "myfind ", strlen("myfind ")) == 0){
+                        if(!logged_state){
+                            printf("You are not logged in!\n");
+                        } else{
+                            apelare_myfind(user_command);
+                        }
+                    }else{
+                        if(strncmp(user_command, "mystat ", strlen("mystat ")) == 0){
+                            if(!logged_state){
+                                printf("You are not logged in!\n");
+                            } else{
+                                apelare_mystat(user_command);
+                            }
+                        } else{
+                            printf("Unknown command!\n");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

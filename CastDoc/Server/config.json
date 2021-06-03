@@ -1,0 +1,43 @@
+[
+            { "nume_conversie" : "pdftotext",
+              "tip_intrare" : "pdf",
+              "tip_iesire"  : "txt",
+              "comanda"     : "pdftotext $in $out"
+            },
+            {
+              "nume_conversie" : "ps2pdf",
+              "tip_intrare" : "ps",
+              "tip_iesire"  : "pdf",
+              "comanda"     : "ps2pdf -i $in -o $out"
+            },
+            {
+              "nume_conversie" : "pdf2ps",
+              "tip_intrare" : "pdf",
+              "tip_iesire"  : "ps",
+              "comanda"     : "pdf2ps -i $in -o $out"
+            },
+            {
+              "nume_conversie" : "latex2html",
+              "tip_intrare" : "tex",
+              "tip_iesire"  : "html",
+              "comanda"     : "latex2html $in"
+            },
+            {
+              "nume_conversie" : "html2text",
+              "tip_intrare" : "html",
+              "tip_iesire"  : "txt",
+              "comanda"     : "html2text $in"
+            },
+            {
+              "nume_conversie" : "php2po",
+              "tip_intrare" : "php",
+              "tip_iesire"  : "po",
+              "comanda"     : "php2po -i $in -o $out"
+            },
+            {
+              "nume_conversie" : "html2po",
+              "tip_intrare" : "html",
+              "tip_iesire"  : "po",
+              "comanda"     : "html2po -i $in -o $out"
+            }
+]
